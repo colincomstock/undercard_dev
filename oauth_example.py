@@ -97,6 +97,7 @@ def refresh_token():
         return redirect('/login')
 
     if datetime.now().timestamp() > session['expires_at']:
+        print("TOKEN EXPIRED. REFRESHING...")
         req_body = {
             'grant_type': 'refresh_token',
             'refresh_token': session['refresh_token'],

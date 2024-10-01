@@ -27,7 +27,7 @@ def index():
 
 @app.route('/login')
 def login():
-    scope = 'user-read-private user-read-email'
+    scope = 'user-read-private user-read-email user-top-read'
 
     params = {
         'client_id': CLIENT_ID,
@@ -62,16 +62,40 @@ def callback():
         session['refresh_token'] = token_info['refresh_token']
         session['expires_at'] = datetime.now().timestamp() + token_info['expires_in']
 
-        return redirect('/playlists')
+        return redirect('/top-tracks')
+
+def token_expired():
+    return datetime.now().timestamp() > session.get('expires_at', 0)
+
+def refresh_access_token():
+    if token_expired():
+        response = requests.post(TOKEN_URL, data={
+            'grant_type': 'refresh_token',
+            'refresh_token': session['refresh_token'],
+            'client_id': CLIENT_ID,
+            'client_secret': CLIENT_SECRET
+        })
+
+        # Error handling
+        if response.status_code == 200:
+            token_info = response.json()
+            session['access_token'] = token_info['access_token']
+            session['expires_at'] = datetime.now().timestamp() + token_info['expires_in']
+        else:
+            return jsonify({
+                "error": "Failed to refresh access token",
+                "status_code": response.status_code,
+                "response_text": response.text
+            }), response.status_code
+
+
+def ensure_token_valid():
+    if token_expired():
+        refresh_access_token()
 
 @app.route('/playlists')
 def get_playlists():
-    if 'access_token' not in session:
-        return redirect('/login')
-
-    if datetime.now().timestamp() > session['expires_at']:
-        return redirect('/refresh-token')
-
+    ensure_token_valid()
     headers = {
         'Authorization': f"Bearer {session['access_token']}"
     }
@@ -91,27 +115,33 @@ def get_playlists():
             "response_text": response.text
         })
 
-@app.route('/refresh-token')
-def refresh_token():
-    if 'refresh_token' not in session:
-        return redirect('/login')
+@app.route('/top-tracks')
+def get_top_tracks():
+    ensure_token_valid()
+    headers = {
+        'Authorization': f"Bearer {session['access_token']}"
+    }
 
-    if datetime.now().timestamp() > session['expires_at']:
-        print("TOKEN EXPIRED. REFRESHING...")
-        req_body = {
-            'grant_type': 'refresh_token',
-            'refresh_token': session['refresh_token'],
-            'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET
-        }
+    params = {
+        'time_range': 'medium_term',
+        'limit': '50'
+    }
 
-        response = requests.post(TOKEN_URL, data=req_body)
-        new_token_info = response.json()
+    response = requests.get(API_BASE_URL + 'me/top/tracks', headers=headers, params=params)
 
-        session['access_token'] = new_token_info['access_token']
-        session['expires_at'] = datetime.now().timestamp() + new_token_info['expires_in']
+    # Check if the request was successful
+    if response.status_code == 200:
+        try:
+            top_tracks = response.json()
+            return jsonify(top_tracks)
+        except ValueError:
+            return jsonify({"error": "Could not parse JSON", "response_text": response.text})
+    else:
+        return jsonify({
+            "error": f"Failed to fetch playlists. Status code: {response.status_code}",
+            "response_text": response.text
+        })
 
-        return redirect('/playlists')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', debug=True)
